@@ -1,8 +1,0 @@
-{
-  "id": "claude-usage",
-  "name": "Claude 用量",
-  "media": [],
-  "requirements": {
-    "paseo": ">=0.15.4"
-  }
-}

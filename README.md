@@ -1,51 +1,54 @@
-# Claude 用量（Paseo 本地插件）
+# claude-usage-wrapper
 
-在 Paseo 里每个 Claude Code agent 的输入框上方显示 5 小时 / 7 天配额用量和重置时间，并把同一份数据写成文件给 agent 读。
+给 Paseo 里的 Claude agent 套一层 `claude`，把 Claude Code 订阅的 5 小时 / 7 天用量写成和状态栏插件一样的文件，让 `~/.claude/skills/full-auto-mode/scripts/usage.sh` 在纯 Paseo（SDK）会话里也能读到最新用量。
 
-## 界面
+## 原理
 
-provider 为 `claude` 的 agent，输入框上方 pill 那一排（和 Tasks、Subagents 同一排）有一个 pill，每 60 秒刷新，点一下立即刷新：
+Paseo 通过 Claude Agent SDK 启动 `claude`，从它的 stdout 读 stream-json。Claude Code 2.1.322 会在其中输出
+`rate_limit_event`，`rate_limit_info.unifiedWindows` 里带 `five_hour` / `seven_day` 的 `utilization`（0–1）和 `resetsAt`（epoch 秒）。
+Paseo 自己会丢掉这条消息，wrapper 在它之前截下来：
 
-```
-5h 14% · 7d 41%
-```
-
-鼠标悬停显示重置时间（tooltip）：`5h resets 04:20 · 7d resets Nov 14, 11:00 · Click to refresh`（当天重置的只写时分，24 小时制）。
-Paseo 把 pill 限制在 160px 宽、label 单行超出截断，所以 pill 上只放百分比。pi 等其他 provider 的 agent 不显示。
-
-## 给 agent 读的文件
-
-- 路径：`~/.claude/usage/claude-usage.json`（设了 `CLAUDE_CONFIG_DIR` 时在 `$CLAUDE_CONFIG_DIR/usage/claude-usage.json`），和 statusline 写的 `<session_id>.json` 在同一目录、同一格式。
-- 内容是 `rate_limits` 非空的最新一份源文件的**原样副本**，一字不改；`updated_at` 是源数据的真实时间，不是复制时间。
-- 每个 agent 会话（任何 provider，包括 pi）打开时都会注入环境变量 `CLAUDE_USAGE_FILE` 指向它（插件安装前已打开的会话要重开后才有）。
-- daemon 侧每 60 秒复制一次，界面刷新时也会复制；找不到任何有 `rate_limits` 的源文件时不写。
+- 参数、stdin、stderr、退出码、信号全部透传，stdout 逐块原样转发（不加缓冲，不改字节）。
+- 遇到 `rate_limit_event` 就合并写 `~/.claude/usage/<session_id>.json`（尊重 `CLAUDE_CONFIG_DIR`），格式与状态栏插件相同：
 
 ```json
 {
-  "updated_at": 1794425619,
-  "context_used_percentage": 5,
+  "updated_at": 1794429386,
+  "context_used_percentage": null,
   "rate_limits": {
-    "five_hour": { "used_percentage": 14, "resets_at": 1794428400 },
-    "seven_day": { "used_percentage": 41, "resets_at": 1794625200 }
+    "five_hour": { "used_percentage": 3, "resets_at": 1794446400 },
+    "seven_day": { "used_percentage": 42, "resets_at": 1794625200 }
   }
 }
 ```
 
-- 时间都是 epoch 秒。`resets_at` 已过的窗口已经清零，`used_percentage` 是旧数，读的人自己判断（`usage.sh` 和 pill 都这么做）。
-- 插件读源数据时必须跳过 `claude-usage.json` 本身：它和源文件同目录、同格式、同 `updated_at`，不跳过会把自己的副本当源读回来。
+- `used_percentage` 与状态栏同一算法：`min(round(utilization*1000)/10, 100)`。事件里没带的窗口保留旧值。先写唯一名的临时文件再 rename。
+- `context_used_percentage` wrapper 拿不到，固定为 `null`。
 
-## 数据来源
+注意：Claude Code 不是每次请求都发这条事件，只在某个窗口的整数百分比、重置时间或状态变了时才发（每个进程的第一次响应一定会发）。所以数字没变时 `updated_at` 不会刷新，但数字本身是对的。
 
-与 `~/.claude/skills/full-auto-mode/scripts/usage.sh` 相同：Claude Code 的 statusline 插件每次渲染时把 `rate_limits` 写进 `~/.claude/usage/<session_id>.json`，插件取其中 `updated_at` 最新且 `rate_limits` 非空的一份，原样复制。不读取任何凭证。
+## 安装
 
-局限：statusline 只在 Claude Code 终端会话收到新消息时才渲染，没有终端会话活动时数字不会变（`sourceUpdatedAt` 会停住），但过了重置时间会自动按清零处理。
+前提：`node` 在 Paseo daemon 的 PATH 里；真正的 claude 在 `~/.local/bin/claude`（否则设环境变量 `CLAUDE_REAL_BIN`）。
 
-## 开发
+在 `~/.paseo/config.json` 的 `agents.providers.claude` 下加：
+
+```json
+"command": ["/Users/ymy/Projects/paseo-claude-usage/claude-usage-wrapper"]
+```
+
+然后执行 `paseo reload`。已打开的 Claude agent 重开后生效。
+
+## 回滚
+
+删掉 `agents.providers.claude.command` 这一行，再执行 `paseo reload`。
+
+## 测试
 
 ```bash
-npm install
-npm run typecheck
-paseo plugin install "$PWD"    # 首次安装
-paseo plugin reload claude-usage  # 改代码后
-paseo plugin logs claude-usage
+# 假数据：透传与写文件（不碰真实目录）
+CLAUDE_REAL_BIN=/path/to/fake-claude CLAUDE_CONFIG_DIR=/tmp/cfg ./claude-usage-wrapper -p hi
+# 真实调用（需要已登录的 claude）
+./claude-usage-wrapper -p "reply with: ok" --model haiku --output-format stream-json --verbose
+~/.claude/skills/full-auto-mode/scripts/usage.sh
 ```

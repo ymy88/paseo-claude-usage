@@ -1,0 +1,82 @@
+#!/usr/bin/env node
+// 包一层 claude：参数、stdin、stderr、退出码全部透传，stdout 逐块原样转发。
+// 同时从 stdout 的 stream-json 里截 rate_limit_event，把 unifiedWindows 的 5h / 7d 用量
+// 按状态栏插件的格式写到 ~/.claude/usage/<session_id>.json（给 full-auto-mode 的 usage.sh 读）。
+// 真正的 claude 默认是 ~/.local/bin/claude，可用环境变量 CLAUDE_REAL_BIN 覆盖。
+const { spawn } = require("node:child_process");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const { StringDecoder } = require("node:string_decoder");
+
+const real = process.env.CLAUDE_REAL_BIN || path.join(os.homedir(), ".local/bin/claude");
+if (fs.realpathSync(real) === fs.realpathSync(__filename)) {
+  console.error(`claude-usage-wrapper: CLAUDE_REAL_BIN 指向了自己（${real}），拒绝递归`);
+  process.exit(127);
+}
+const usageDir = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude"), "usage");
+
+// 和 Claude Code 状态栏一致：jPe(u) = Math.min(Math.round(u * 1000) / 10, 100)
+const pct = (u) => Math.min(Math.round(u * 1000) / 10, 100);
+
+function record(event) {
+  const windows = event.rate_limit_info?.unifiedWindows;
+  if (!event.session_id || !windows) return;
+  const file = path.join(usageDir, `${event.session_id}.json`);
+  let old = {};
+  try {
+    old = JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {}
+  // 事件里没带的窗口保留旧值。
+  const rate_limits = { ...old.rate_limits };
+  for (const key of ["five_hour", "seven_day"]) {
+    const w = windows[key];
+    if (w) rate_limits[key] = { used_percentage: pct(w.utilization), resets_at: w.resetsAt };
+  }
+  const out = {
+    updated_at: Math.floor(Date.now() / 1000),
+    context_used_percentage: old.context_used_percentage ?? null, // 拿不到上下文占比，保持状态栏的字段
+    rate_limits,
+  };
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  fs.mkdirSync(usageDir, { recursive: true });
+  fs.writeFileSync(tmp, JSON.stringify(out, null, 2) + "\n");
+  fs.renameSync(tmp, file);
+}
+
+const child = spawn(real, process.argv.slice(2), { stdio: ["inherit", "pipe", "inherit"] });
+
+// 收到就写出去，不攒缓冲；行解析只是旁路，出任何错都不影响透传。
+let pending = "";
+const decoder = new StringDecoder("utf8"); // 多字节字符跨块时不拆坏
+child.stdout.on("data", (chunk) => {
+  process.stdout.write(chunk);
+  pending += decoder.write(chunk);
+  let nl;
+  while ((nl = pending.indexOf("\n")) >= 0) {
+    const line = pending.slice(0, nl);
+    pending = pending.slice(nl + 1);
+    if (!line.includes('"rate_limit_event"')) continue;
+    try {
+      const event = JSON.parse(line);
+      if (event.type === "rate_limit_event") record(event);
+    } catch (error) {
+      console.error(`claude-usage-wrapper: 写用量失败: ${error.message}`);
+    }
+  }
+});
+
+for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(sig, () => child.kill(sig));
+child.on("error", (error) => {
+  console.error(`claude-usage-wrapper: 启动 ${real} 失败: ${error.message}`);
+  process.exit(127);
+});
+// 等 stdout 写完再退出，退出码 / 信号与真正的 claude 一致。
+child.on("close", (code, signal) => {
+  process.stdout.write("", () => {
+    if (signal) {
+      process.removeAllListeners(signal);
+      process.kill(process.pid, signal);
+    } else process.exit(code ?? 1);
+  });
+});
