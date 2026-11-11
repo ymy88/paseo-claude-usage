@@ -1,22 +1,18 @@
 import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
 
-// 一个配额窗口：已用百分比 + 重置时间（ISO 字符串）。
-// 窗口已过重置时间时，旧读数作废：usedPercent=0，resetsAt=null。
-const window = z.object({ usedPercent: z.number(), resetsAt: z.string().nullable() });
-
-// 写进用量文件、也通过 RPC 返回给界面的完整结构。
+// 与 statusline 写的 ~/.claude/usage/<session_id>.json 同一格式（插件输出就是源文件的原样副本）。
+// resets_at / updated_at 都是 epoch 秒；过没过重置时间由读的人自己判断。
+const window = z.object({ used_percentage: z.number(), resets_at: z.number() }).nullish();
 export const usageSchema = z.object({
-  updatedAt: z.string(), // 插件写这份文件的时间
-  sourceUpdatedAt: z.string().nullable(), // statusline 最后一次拿到这组数的时间
-  file: z.string(), // 用量文件自身的绝对路径
-  fiveHour: window.nullable(),
-  sevenDay: window.nullable(),
+  updated_at: z.number(),
+  rate_limits: z.object({ five_hour: window, seven_day: window }),
 });
 export type Usage = z.infer<typeof usageSchema>;
+export type UsageWindow = Usage["rate_limits"]["five_hour"];
 
 export const getUsageRpc = defineRpc({
   name: "usage.get",
   input: z.object({}),
-  output: usageSchema,
+  output: usageSchema.nullable(), // 找不到任何有 rate_limits 的源文件时为 null
 });

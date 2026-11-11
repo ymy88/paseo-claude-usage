@@ -15,27 +15,28 @@ Paseo 把 pill 限制在 160px 宽、label 单行超出截断，所以 pill 上�
 
 ## 给 agent 读的文件
 
-- 路径：`~/.claude/usage/claude-usage.json`（设了 `CLAUDE_CONFIG_DIR` 时在 `$CLAUDE_CONFIG_DIR/usage/claude-usage.json`），和 statusline 写的 `<session_id>.json` 在同一目录。插件读源数据时会跳过这个文件；文件里没有顶层 `updated_at` 字段，所以 full-auto-mode 的 `usage.sh` 不会把它当源文件。
+- 路径：`~/.claude/usage/claude-usage.json`（设了 `CLAUDE_CONFIG_DIR` 时在 `$CLAUDE_CONFIG_DIR/usage/claude-usage.json`），和 statusline 写的 `<session_id>.json` 在同一目录、同一格式。
+- 内容是 `rate_limits` 非空的最新一份源文件的**原样副本**，一字不改；`updated_at` 是源数据的真实时间，不是复制时间。
 - 每个 agent 会话（任何 provider，包括 pi）打开时都会注入环境变量 `CLAUDE_USAGE_FILE` 指向它（插件安装前已打开的会话要重开后才有）。
-- daemon 侧每 60 秒重写一次，界面刷新时也会重写。
+- daemon 侧每 60 秒复制一次，界面刷新时也会复制；找不到任何有 `rate_limits` 的源文件时不写。
 
 ```json
 {
-  "updatedAt": "2026-11-11T19:43:32.000Z",
-  "sourceUpdatedAt": "2026-11-11T19:33:39.000Z",
-  "file": "/Users/you/.claude/usage/claude-usage.json",
-  "fiveHour": { "usedPercent": 14, "resetsAt": "2026-11-11T20:20:00.000Z" },
-  "sevenDay": { "usedPercent": 41, "resetsAt": "2026-11-14T03:00:00.000Z" }
+  "updated_at": 1794425619,
+  "context_used_percentage": 5,
+  "rate_limits": {
+    "five_hour": { "used_percentage": 14, "resets_at": 1794428400 },
+    "seven_day": { "used_percentage": 41, "resets_at": 1794625200 }
+  }
 }
 ```
 
-- `updatedAt`：插件写文件的时间；`sourceUpdatedAt`：这组数实际被读到的时间。
-- 窗口已过 `resetsAt` 时视为已清零：`usedPercent: 0, resetsAt: null`。
-- 读不到数据时窗口为 `null`。
+- 时间都是 epoch 秒。`resets_at` 已过的窗口已经清零，`used_percentage` 是旧数，读的人自己判断（`usage.sh` 和 pill 都这么做）。
+- 插件读源数据时必须跳过 `claude-usage.json` 本身：它和源文件同目录、同格式、同 `updated_at`，不跳过会把自己的副本当源读回来。
 
 ## 数据来源
 
-与 `~/.claude/skills/full-auto-mode/scripts/usage.sh` 相同：Claude Code 的 statusline 插件每次渲染时把 `rate_limits` 写进 `~/.claude/usage/<session_id>.json`，插件取其中 `updated_at` 最新且 `rate_limits` 非空的一份。不读取任何凭证。
+与 `~/.claude/skills/full-auto-mode/scripts/usage.sh` 相同：Claude Code 的 statusline 插件每次渲染时把 `rate_limits` 写进 `~/.claude/usage/<session_id>.json`，插件取其中 `updated_at` 最新且 `rate_limits` 非空的一份，原样复制。不读取任何凭证。
 
 局限：statusline 只在 Claude Code 终端会话收到新消息时才渲染，没有终端会话活动时数字不会变（`sourceUpdatedAt` 会停住），但过了重置时间会自动按清零处理。
 

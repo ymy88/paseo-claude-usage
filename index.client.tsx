@@ -1,9 +1,9 @@
 import type { PluginButtonRegistration, PluginClientContext } from "@getpaseo/plugin/client";
-import { getUsageRpc, type Usage } from "./shared/usage";
+import { getUsageRpc, type UsageWindow } from "./shared/usage";
 
 // 英文 24 小时制：今天的只写时分（04:20），其他日子写 "Nov 14, 11:00"。
-function fmt(isoTime: string) {
-  const d = new Date(isoTime);
+function fmt(epochSec: number) {
+  const d = new Date(epochSec * 1000);
   const time = { hour: "2-digit", minute: "2-digit", hourCycle: "h23" } as const;
   return d.toDateString() === new Date().toDateString()
     ? d.toLocaleTimeString("en-US", time)
@@ -12,9 +12,12 @@ function fmt(isoTime: string) {
 
 // pill 按钮被 Paseo 限制为 maxWidth:160（label 单行、超出截断），只放得下两个百分比；
 // 重置时间放进 title，桌面端鼠标悬停时以 tooltip 显示。
-const pct = (name: string, w: Usage["fiveHour"]) => `${name} ${w ? `${w.usedPercent}%` : "?"}`;
-const resets = (name: string, w: Usage["fiveHour"]) =>
-  !w ? `${name} no data` : w.resetsAt ? `${name} resets ${fmt(w.resetsAt)}` : `${name} reset`;
+// 过了 resets_at 的窗口已经清零（源文件里还是旧数），显示为 0% / reset，与 usage.sh 的判断一致。
+const expired = (w: NonNullable<UsageWindow>) => w.resets_at * 1000 <= Date.now();
+const pct = (name: string, w: UsageWindow) =>
+  `${name} ${w ? `${expired(w) ? 0 : Math.floor(w.used_percentage)}%` : "?"}`;
+const resets = (name: string, w: UsageWindow) =>
+  !w ? `${name} no data` : expired(w) ? `${name} reset` : `${name} resets ${fmt(w.resets_at)}`;
 
 // 每个 agent 的输入框上方（Tasks / Subagents 那一排）放一个 pill，显示 5h / 7d 用量，点一下立即刷新。
 // 只挂在 provider 为 "claude"（Claude Code）的 agent 上；pi 等其他 provider 不显示。
@@ -28,8 +31,9 @@ export default function contribute(client: PluginClientContext) {
   const refresh = async () => {
     try {
       const u = await client.rpc(getUsageRpc, {});
-      label = `${pct("5h", u.fiveHour)} · ${pct("7d", u.sevenDay)}`;
-      title = `${resets("5h", u.fiveHour)} · ${resets("7d", u.sevenDay)} · Click to refresh`;
+      const { five_hour: h5, seven_day: d7 } = u?.rate_limits ?? {};
+      label = `${pct("5h", h5)} · ${pct("7d", d7)}`;
+      title = `${resets("5h", h5)} · ${resets("7d", d7)} · Click to refresh`;
     } catch (error) {
       label = "用量读取失败";
       title = TITLE;
