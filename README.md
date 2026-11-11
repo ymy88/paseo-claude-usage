@@ -34,8 +34,8 @@
 
 ## 界面
 
-provider 为 `claude` 的 agent，输入框上方 pill 那一排显示 `5h 8% · 7d 43%`，每 60 秒刷新，点击立即刷新。
-鼠标悬停显示重置时间：`5h resets 09:20 · 7d resets Nov 14, 11:00 · Click to refresh`。过了重置时间的窗口显示 `0%` / `reset`。
+provider 为 `claude` 的 agent，输入框上方 pill 那一排显示 `5h 8% · 7d 43%`，每 60 秒重读一次文件。
+鼠标悬停显示重置时间：`5h resets 09:20 · 7d resets Nov 14, 11:00`。过了重置时间的窗口显示 `0%` / `reset`。
 数据取 `~/.claude/usage/*.json` 里 `rate_limits` 非空、`updated_at` 最新的一份（与 `usage.sh` 同规则）。
 
 ## 安装

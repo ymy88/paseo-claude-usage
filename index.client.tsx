@@ -21,10 +21,13 @@ const resets = (name: string, w: UsageWindow) =>
 
 // 每个 agent 的输入框上方（Tasks / Subagents 那一排）放一个 pill，显示 5h / 7d 用量，点一下立即刷新。
 // 只挂在 provider 为 "claude"（Claude Code）的 agent 上；pi 等其他 provider 不显示。
+// pill 的 behavior 是必填项。数据由 claude 进程里的预加载脚本在 API 响应时写入，点击重读拿不到新数据，所以点击什么都不做。
+const NO_ACTION = { kind: "action", onPress() {} } as const;
+
 export default function contribute(client: PluginClientContext) {
   const pills = new Map<string, PluginButtonRegistration>();
   const lifetime = new AbortController();
-  const TITLE = "Claude Code usage · Click to refresh";
+  const TITLE = "Claude Code usage";
   let label = "Claude 用量…";
   let title = TITLE;
 
@@ -33,7 +36,7 @@ export default function contribute(client: PluginClientContext) {
       const u = await client.rpc(getUsageRpc, {});
       const { five_hour: h5, seven_day: d7 } = u?.rate_limits ?? {};
       label = `${pct("5h", h5)} · ${pct("7d", d7)}`;
-      title = `${resets("5h", h5)} · ${resets("7d", d7)} · Click to refresh`;
+      title = `${resets("5h", h5)} · ${resets("7d", d7)}`;
     } catch (error) {
       label = "用量读取失败";
       title = TITLE;
@@ -52,7 +55,7 @@ export default function contribute(client: PluginClientContext) {
         id: "claude-usage",
         workspaceId: agent.workspaceId,
         agentId: agent.id,
-        button: { title, icon: "Gauge", label, behavior: { kind: "action", onPress: refresh } },
+        button: { title, icon: "Gauge", label, behavior: NO_ACTION },
       }),
     );
   };
