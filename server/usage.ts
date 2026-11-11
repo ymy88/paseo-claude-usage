@@ -8,7 +8,11 @@ import { join } from "node:path";
 import type { Usage } from "../shared/usage";
 
 const SOURCE_DIR = join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"), "usage");
-export const USAGE_FILE = join(process.env.PASEO_HOME ?? join(homedir(), ".paseo"), "claude-usage.json");
+// 输出文件和 statusline 的源文件放在同一目录。注意：
+// - 扫源数据时必须跳过它，别把输出当输入读回来；
+// - 它不能有顶层 updated_at 字段，否则 full-auto-mode 的 usage.sh 会把它当最新源文件选中。
+const OUTPUT_NAME = "claude-usage.json";
+export const USAGE_FILE = join(SOURCE_DIR, OUTPUT_NAME);
 
 type RawWindow = { used_percentage?: number; resets_at?: number } | undefined;
 type Raw = { updated_at?: number; rate_limits?: { five_hour?: RawWindow; seven_day?: RawWindow } | null };
@@ -26,7 +30,7 @@ export function toWindow(w: RawWindow, nowSec: number) {
 async function readLatest(): Promise<Raw | null> {
   let best: Raw | null = null;
   for (const name of await readdir(SOURCE_DIR).catch(() => [] as string[])) {
-    if (!name.endsWith(".json")) continue;
+    if (!name.endsWith(".json") || name === OUTPUT_NAME) continue;
     const raw: Raw | null = await readFile(join(SOURCE_DIR, name), "utf8")
       .then((t) => JSON.parse(t))
       .catch(() => null);

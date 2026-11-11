@@ -15,7 +15,7 @@ Paseo 把 pill 限制在 160px 宽、label 单行超出截断，所以 pill 上�
 
 ## 给 agent 读的文件
 
-- 路径：`~/.paseo/claude-usage.json`（daemon 设了 `PASEO_HOME` 时在 `$PASEO_HOME/claude-usage.json`）
+- 路径：`~/.claude/usage/claude-usage.json`（设了 `CLAUDE_CONFIG_DIR` 时在 `$CLAUDE_CONFIG_DIR/usage/claude-usage.json`），和 statusline 写的 `<session_id>.json` 在同一目录。插件读源数据时会跳过这个文件；文件里没有顶层 `updated_at` 字段，所以 full-auto-mode 的 `usage.sh` 不会把它当源文件。
 - 每个 agent 会话（任何 provider，包括 pi）打开时都会注入环境变量 `CLAUDE_USAGE_FILE` 指向它（插件安装前已打开的会话要重开后才有）。
 - daemon 侧每 60 秒重写一次，界面刷新时也会重写。
 
@@ -23,7 +23,7 @@ Paseo 把 pill 限制在 160px 宽、label 单行超出截断，所以 pill 上�
 {
   "updatedAt": "2026-11-11T19:43:32.000Z",
   "sourceUpdatedAt": "2026-11-11T19:33:39.000Z",
-  "file": "/Users/you/.paseo/claude-usage.json",
+  "file": "/Users/you/.claude/usage/claude-usage.json",
   "fiveHour": { "usedPercent": 14, "resetsAt": "2026-11-11T20:20:00.000Z" },
   "sevenDay": { "usedPercent": 41, "resetsAt": "2026-11-14T03:00:00.000Z" }
 }
