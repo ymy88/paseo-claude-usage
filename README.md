@@ -10,7 +10,7 @@ provider 为 `claude` 的 agent，输入框上方 pill 那一排（和 Tasks、S
 5h 14% · 7d 41%
 ```
 
-鼠标悬停显示重置时间（tooltip）：`5h 已用 14%，04:20 重置；7d 已用 41%，11/14 11:00 重置（点击刷新）`。
+鼠标悬停显示重置时间（tooltip）：`5h resets 04:20 · 7d resets Nov 14, 11:00 · Click to refresh`（当天重置的只写时分，24 小时制）。
 Paseo 把 pill 限制在 160px 宽、label 单行超出截断，所以 pill 上只放百分比。pi 等其他 provider 的 agent 不显示。
 
 ## 给 agent 读的文件
