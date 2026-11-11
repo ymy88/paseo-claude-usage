@@ -1,20 +1,21 @@
-# Claude 用量（Paseo 本地插件）
+# paseo-claude-usage
 
-让 Paseo 里的 Claude Code agent 像终端里的状态栏一样，把订阅的 5 小时 / 7 天用量写到
-`~/.claude/usage/<session_id>.json`（`~/.claude/skills/full-auto-mode/scripts/usage.sh` 读的就是它），
-并在 Claude agent 的输入框上方显示用量。
+A local Paseo plugin that shows your Claude subscription usage (5-hour and 7-day windows) for Claude Code agents running in Paseo, and writes it to disk so scripts and agents can read it.
 
-## 原理
+- **In the UI**: a pill above the composer of every Claude agent shows `5h 8% · 7d 43%`. Hover to see reset times: `5h resets 09:20 · 7d resets Nov 14, 11:00`. Not shown for other providers (e.g. pi).
+- **On disk**: `~/.claude/usage/<session_id>.json`, in the same format Claude Code statusline scripts commonly write, so existing quota-check scripts keep working without changes.
 
-- Claude Code 在 stream-json 输出里会发 `rate_limit_event`，`rate_limit_info.unifiedWindows` 带
-  `five_hour` / `seven_day` 的 `utilization`（0–1）和 `resetsAt`（epoch 秒）。Paseo 自己会丢掉这条消息。
-- 插件在 `agent.open.before` 钩子里，只给 provider 为 `claude` 的会话加环境变量
-  `BUN_OPTIONS=--preload ~/.paseo/claude-usage-preload.js`（和已有的 `BUN_OPTIONS` 合并）。
-  claude 是 Bun 编译的，会在启动时执行这段预加载脚本。
-- 预加载脚本（源码 `server/preload.ts`，插件启动时生成到 `~/.paseo/claude-usage-preload.js`）只在
-  claude 本体且是 stream-json 模式时生效：包一层 `process.stdout.write`，输出原样不动，
-  旁路按行解析，遇到 `rate_limit_event` 就合并写用量文件。其他进程（比如 agent 在 Bash 里跑的 bun）里什么都不做。
-- 用量文件格式与状态栏插件相同：
+## Why
+
+When you run Claude Code in a terminal, the statusline receives `rate_limits` on every render. Agents inside Paseo run Claude Code through the Claude Agent SDK, which has no statusline. Claude Code does emit a `rate_limit_event` message in its `stream-json` output, but Paseo drops it, and plugins cannot see raw SDK messages. Paseo's built-in usage source also finds no account when Claude Code is logged in with `claude setup-token` (`CLAUDE_CODE_OAUTH_TOKEN`).
+
+## How it works
+
+1. In the `agent.open.before` hook, the plugin adds `BUN_OPTIONS=--preload ~/.paseo/claude-usage-preload.js` to sessions whose provider is `claude`. Any existing `BUN_OPTIONS` is kept.
+2. The `claude` binary is compiled with Bun, so it runs the preload script on startup. The script (source: `server/preload.ts`, written to `~/.paseo/claude-usage-preload.js` when the plugin starts) only activates inside the Claude Code binary in `stream-json` mode. It does nothing in other Bun processes, such as `bun` run from an agent's shell.
+3. The script wraps `process.stdout.write`. Output passes through byte-for-byte; a side parser reads complete lines, and on `rate_limit_event` takes `rate_limit_info.unifiedWindows` and merges it into the usage file. All errors are swallowed so they can never break the agent's output.
+
+Usage file format:
 
 ```json
 {
@@ -27,41 +28,45 @@
 }
 ```
 
-  `used_percentage` 与状态栏同一算法 `min(round(utilization*1000)/10, 100)`；事件里没带的窗口保留旧值；
-  `context_used_percentage` 拿不到，固定为 `null`。
-- Claude Code 不是每次请求都发这条事件，只在某个窗口的整数百分比、重置时间或状态变了时才发
-  （每个进程第一次请求一定会发）。数字没变时 `updated_at` 不刷新，但数字是对的。
+- `updated_at` and `resets_at` are epoch seconds. `used_percentage` is `min(round(utilization * 1000) / 10, 100)`.
+- A window missing from an event keeps its previous value. `context_used_percentage` is not available and is always `null`.
+- `$CLAUDE_CONFIG_DIR` is honored instead of `~/.claude` when set.
+- Claude Code only emits `rate_limit_event` when a window's integer percentage, reset time or status changes (and always on a process's first request). So `updated_at` can lag while the numbers stay correct.
 
-## 界面
+The pill reads the newest file in `~/.claude/usage/` that has non-null `rate_limits`, every 60 seconds. Windows past their reset time show `0%` / `reset`.
 
-provider 为 `claude` 的 agent，输入框上方 pill 那一排显示 `5h 8% · 7d 43%`，每 60 秒重读一次文件。
-鼠标悬停显示重置时间：`5h resets 09:20 · 7d resets Nov 14, 11:00`。过了重置时间的窗口显示 `0%` / `reset`。
-数据取 `~/.claude/usage/*.json` 里 `rate_limits` 非空、`updated_at` 最新的一份（与 `usage.sh` 同规则）。
+## Requirements
 
-## 安装
+- Paseo >= 0.15.4
+- Claude Code with `unifiedWindows` in `rate_limit_event` (verified on 2.1.322)
+- Node.js and npm (for type checking only)
+
+## Install
 
 ```bash
+git clone https://github.com/ymy88/paseo-claude-usage.git
+cd paseo-claude-usage
 npm install
 npm run typecheck
 paseo plugin install "$PWD"
 ```
 
-已打开的 Claude agent 会在下一次空闲时自动重开并生效。不需要改 `~/.paseo/config.json`。
+Open Claude agents restart with the preload on their next idle. No change to `~/.paseo/config.json` is needed.
 
-## 卸载
+## Uninstall
 
 ```bash
 paseo plugin remove claude-usage
 rm -f ~/.paseo/claude-usage-preload.js
 ```
 
-卸载后新开的 Claude 会话不再带 `BUN_OPTIONS`。已写出的 `~/.claude/usage/*.json` 不会删除。
+New Claude sessions no longer get `BUN_OPTIONS`. Existing files in `~/.claude/usage/` are left in place.
 
-## 失效风险
+## Known risks
 
-这套做法依赖两件 Claude Code 的实现细节，升级后可能悄悄失效（失效时只是不再写文件，不会影响 agent 输出）：
+This relies on two Claude Code implementation details and may silently stop working after an upgrade. When it does, the usage file just stops updating; agent output is unaffected.
 
-1. claude 是 Bun 编译的，并且认 `BUN_OPTIONS=--preload`（2.1.322 实测可以；路径不认引号，空格要用反斜杠转义）。
-2. stream-json 是通过 `process.stdout.write` 写出的，且 `rate_limit_event` 带 `unifiedWindows`。
+1. `claude` is a Bun-compiled binary that honors `BUN_OPTIONS=--preload`. The path cannot be quoted; spaces must be backslash-escaped.
+2. `stream-json` is written via `process.stdout.write`, and `rate_limit_event` carries `unifiedWindows`.
 
-验证方法：新开一个 Claude agent 发一句话，看 `~/.claude/usage/<session_id>.json` 是否出现。
+To check: open a new Claude agent, send one message, and confirm `~/.claude/usage/<session_id>.json` appears.
