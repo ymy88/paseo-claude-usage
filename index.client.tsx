@@ -1,6 +1,4 @@
-import { type PluginClientContext, type PluginSidebarItemProps, useRpc } from "@getpaseo/plugin/client";
-import { SidebarRow } from "@getpaseo/plugin/client/ui";
-import { useQuery } from "@tanstack/react-query";
+import type { PluginButtonRegistration, PluginClientContext } from "@getpaseo/plugin/client";
 import { getUsageRpc, type Usage } from "./shared/usage";
 
 // 今天的重置时间只显示 HH:mm，其他日子显示 M/D HH:mm。
@@ -11,31 +9,75 @@ function fmt(isoTime: string | null) {
   return d.toDateString() === new Date().toDateString() ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
 }
 
-function line(name: string, w: Usage["fiveHour"]) {
-  return w ? `${name} ${w.usedPercent}% · 重置 ${fmt(w.resetsAt)}` : `${name} 无数据`;
-}
+const part = (name: string, w: Usage["fiveHour"]) =>
+  w ? `${name} ${w.usedPercent}% (${fmt(w.resetsAt)})` : `${name} 无数据`;
 
-// 侧边栏底部两行：5h 和 7d 各一行，点一下立即刷新。
-function UsageItem(_: PluginSidebarItemProps) {
-  const getUsage = useRpc(getUsageRpc);
-  const { data, error, refetch } = useQuery({
-    queryKey: ["claude-usage"],
-    queryFn: () => getUsage({}),
-    refetchInterval: 60_000,
-  });
-  const onPress = () => void refetch();
-  if (!data) {
-    return <SidebarRow icon="Gauge" label={error ? "Claude 用量读取失败" : "Claude 用量…"} onPress={onPress} />;
-  }
-  return (
-    <>
-      <SidebarRow id="5h" icon="Gauge" label={line("5h", data.fiveHour)} onPress={onPress} />
-      <SidebarRow id="7d" icon="CalendarDays" label={line("7d", data.sevenDay)} onPress={onPress} />
-    </>
-  );
-}
-
+// 每个 agent 的输入框上方（Tasks / Subagents 那一排）放一个 pill，显示 5h / 7d 用量，点一下立即刷新。
+// 只挂在 provider 为 "claude"（Claude Code）的 agent 上；pi 等其他 provider 不显示。
 export default function contribute(client: PluginClientContext) {
-  client.addSidebarFooterItem({ id: "claude-usage", title: "Claude 用量", Component: UsageItem });
-  return () => {};
+  const pills = new Map<string, PluginButtonRegistration>();
+  const lifetime = new AbortController();
+  let label = "Claude 用量…";
+
+  const refresh = async () => {
+    try {
+      const u = await client.rpc(getUsageRpc, {});
+      label = `${part("5h", u.fiveHour)} · ${part("7d", u.sevenDay)}`;
+    } catch (error) {
+      label = "Claude 用量读取失败";
+      console.error("读取 Claude 用量失败", error);
+    }
+    for (const pill of pills.values()) pill.update({ label });
+  };
+
+  const register = (agent: { id: string; provider: string; workspaceId?: string | null }) => {
+    pills.get(agent.id)?.remove();
+    pills.delete(agent.id);
+    if (lifetime.signal.aborted || !agent.workspaceId || agent.provider !== "claude") return;
+    pills.set(
+      agent.id,
+      client.addComposerPill({
+        id: "claude-usage",
+        workspaceId: agent.workspaceId,
+        agentId: agent.id,
+        button: { title: "Claude Code 用量（点击刷新）", icon: "Gauge", label, behavior: { kind: "action", onPress: refresh } },
+      }),
+    );
+  };
+  const removeAll = () => {
+    for (const pill of pills.values()) pill.remove();
+    pills.clear();
+  };
+
+  // 订阅 agent 列表：先收到现有 agent 的快照，之后增量更新，重连后会再给一份快照。
+  void client.paseo.agents
+    .list({ subscribe: {}, signal: lifetime.signal })
+    .then(({ subscription }) => {
+      subscription.subscribe({
+        snapshot: ({ entries }) => {
+          removeAll();
+          for (const { agent } of entries) register(agent);
+        },
+        update: (message) => {
+          if (message.type !== "agent_update") return;
+          const update = message.payload;
+          if (update.kind === "upsert") return register(update.agent);
+          pills.get(update.agentId)?.remove();
+          pills.delete(update.agentId);
+        },
+      });
+      return undefined;
+    })
+    .catch((error) => {
+      if (!lifetime.signal.aborted) console.error("订阅 agent 列表失败", error);
+    });
+
+  void refresh();
+  const timer = setInterval(refresh, 60_000);
+
+  return () => {
+    lifetime.abort();
+    clearInterval(timer);
+    removeAll();
+  };
 }

@@ -1,22 +1,21 @@
 # Claude 用量（Paseo 本地插件）
 
-在 Paseo 侧边栏底部显示 Claude Code 订阅的 5 小时 / 7 天配额用量和重置时间，并把同一份数据写成文件给 agent 读。
+在 Paseo 里每个 Claude Code agent 的输入框上方显示 5 小时 / 7 天配额用量和重置时间，并把同一份数据写成文件给 agent 读。
 
 ## 界面
 
-侧边栏底部（「Add project」下面）两行，每 60 秒刷新，点一下立即刷新：
+provider 为 `claude` 的 agent，输入框上方 pill 那一排（和 Tasks、Subagents 同一排）有一个 pill，每 60 秒刷新，点一下立即刷新：
 
 ```
-5h 14% · 重置 04:20
-7d 41% · 重置 11/14 11:00
+5h 14% (04:20) · 7d 41% (11/14 11:00)
 ```
 
-可在 Settings → Sidebar 里调整位置或隐藏。
+pi 等其他 provider 的 agent 不显示。括号里是重置时间，今天的只显示时分。
 
 ## 给 agent 读的文件
 
 - 路径：`~/.paseo/claude-usage.json`（daemon 设了 `PASEO_HOME` 时在 `$PASEO_HOME/claude-usage.json`）
-- 每个 agent 会话打开时都会注入环境变量 `CLAUDE_USAGE_FILE` 指向它（插件安装前已打开的会话要重开后才有）。
+- 每个 agent 会话（任何 provider，包括 pi）打开时都会注入环境变量 `CLAUDE_USAGE_FILE` 指向它（插件安装前已打开的会话要重开后才有）。
 - daemon 侧每 60 秒重写一次，界面刷新时也会重写。
 
 ```json
