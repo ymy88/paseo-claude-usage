@@ -9,6 +9,18 @@ A local Paseo plugin that shows your Claude subscription usage (5-hour and 7-day
 
 When you run Claude Code in a terminal, the statusline receives `rate_limits` on every render. Agents inside Paseo run Claude Code through the Claude Agent SDK, which has no statusline. Claude Code does emit a `rate_limit_event` message in its `stream-json` output, but Paseo drops it, and plugins cannot see raw SDK messages. Paseo's built-in usage source also finds no account when Claude Code is logged in with `claude setup-token` (`CLAUDE_CODE_OAUTH_TOKEN`).
 
+### Why Paseo's built-in Claude usage breaks with `setup-token`
+
+Paseo ships a built-in Claude usage source (`/Applications/Paseo.app/Contents/Resources/builtin-plugins/claude-usage-source/server/usage.ts`, Paseo 0.15.4). It:
+
+1. Reads the OAuth token from the macOS Keychain item `Claude Code-credentials`, falling back to `~/.claude/.credentials.json` (`claudeAiOauth.accessToken`). It never reads the `CLAUDE_CODE_OAUTH_TOKEN` environment variable.
+2. Skips the account as expired if `claudeAiOauth.expiresAt` is in the past.
+3. Calls `GET https://api.anthropic.com/api/oauth/profile` and `GET https://api.anthropic.com/api/oauth/usage` with that token.
+
+With a normal `claude /login`, Claude Code keeps the Keychain token fresh, so this works. After switching to `claude setup-token` + `CLAUDE_CODE_OAUTH_TOKEN`, Claude Code authenticates from the environment variable and stops refreshing the Keychain token, so Paseo's source only finds a stale, expired login and shows nothing.
+
+Pointing Paseo at the setup-token would not help either: a setup-token is issued with only the `user:inference` scope, while `/api/oauth/usage` requires `user:profile` (Claude Code itself skips that endpoint without it, which is also why `/usage` doesn't work under setup-token). The rate-limit headers on normal model responses, which feed `rate_limit_event`, need no extra scope. That is the source this plugin uses.
+
 ## How it works
 
 1. In the `agent.open.before` hook, the plugin adds `BUN_OPTIONS=--preload ~/.paseo/claude-usage-preload.js` to sessions whose provider is `claude`. Any existing `BUN_OPTIONS` is kept.
