@@ -70,3 +70,7 @@ This relies on two Claude Code implementation details and may silently stop work
 2. `stream-json` is written via `process.stdout.write`, and `rate_limit_event` carries `unifiedWindows`.
 
 To check: open a new Claude agent, send one message, and confirm `~/.claude/usage/<session_id>.json` appears.
+
+## License
+
+MIT
